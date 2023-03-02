@@ -3,19 +3,42 @@ package feedforward
 import (
 	"math"
 	"nn/deepcopy"
+	"nn/mathext"
 	"nn/random"
 
 	"gonum.org/v1/gonum/mat"
 )
 
-type ActivationFunction func(float64) float64
-
-func Identity(x float64) float64 {
-	return x
+type ActivationFunction struct {
+	Eval       func(float64) float64
+	Derivative func(float64) float64
 }
 
-func Tanh(x float64) float64 {
-	return math.Tanh(x)
+var Identity *ActivationFunction = &ActivationFunction{
+	Eval: func(x float64) float64 {
+		return x
+	},
+	Derivative: func(x float64) float64 {
+		return 1
+	},
+}
+
+var Tanh *ActivationFunction = &ActivationFunction{
+	Eval: func(x float64) float64 {
+		return math.Tanh(x)
+	},
+	Derivative: func(x float64) float64 {
+		return 1 - math.Tanh(x)*math.Tanh(x)
+	},
+}
+
+var Sigmoid *ActivationFunction = &ActivationFunction{
+	Eval: func(x float64) float64 {
+		return mathext.Sigmoid(x)
+	},
+	Derivative: func(x float64) float64 {
+		return mathext.Sigmoid(x) * (1 - mathext.Sigmoid(x))
+	},
 }
 
 type Network struct {
@@ -23,10 +46,10 @@ type Network struct {
 	LayerSizes          []int
 	Weights             [][]mat.MutableVector
 	Biases              [][]float64
-	ActivationFunctions []ActivationFunction //per layer
+	ActivationFunctions []*ActivationFunction //per layer
 }
 
-func NewNetwork(layerSizes []int, activationFunctions []ActivationFunction) *Network {
+func NewNetwork(layerSizes []int, activationFunctions []*ActivationFunction) *Network {
 	network := &Network{}
 
 	numLayers := len(layerSizes)
@@ -67,10 +90,7 @@ func (network *Network) Randomize(minWeight, maxWeight, minBias, maxBias float64
 }
 
 func (network *Network) Run(inputs mat.MutableVector, returnNonOutputStates, returnStatesBeforeActivationFunction bool) (mat.MutableVector, []mat.MutableVector, []mat.MutableVector) {
-	prevLayer := deepcopy.Vector(inputs)
-	for i := 0; i < network.LayerSizes[0]; i++ {
-		prevLayer.SetVec(i, network.ActivationFunctions[0](prevLayer.AtVec(i)))
-	}
+	prevLayer := inputs
 
 	states := []mat.MutableVector{}
 	if returnNonOutputStates {
@@ -92,7 +112,7 @@ func (network *Network) Run(inputs mat.MutableVector, returnNonOutputStates, ret
 			statesBeforeActivationFunctions = append(statesBeforeActivationFunctions, deepcopy.Vector(nextLayer))
 		}
 		for j := 0; j < network.LayerSizes[i]; j++ {
-			nextLayer.SetVec(j, network.ActivationFunctions[i](nextLayer.AtVec(j)))
+			nextLayer.SetVec(j, network.ActivationFunctions[i-1].Eval(nextLayer.AtVec(j)))
 		}
 		if returnNonOutputStates {
 			states = append(states, nextLayer)
@@ -128,10 +148,65 @@ func (network *Network) Copy() *Network {
 	return result
 }
 
-func (network *Network) Learn(states []mat.MutableVector, statesBeforeActivationFunctions []mat.MutableVector, groundTruth mat.MutableVector, learnRate float64) {
-	derivatives := mat.NewVecDense(network.LayerSizes[network.NumLayers-1], make([]float64, network.LayerSizes[network.NumLayers-1]))
-	for i := 0; i < network.LayerSizes[network.NumLayers-1]; i++ {
-		derivatives.SetVec(i, 2*(states[network.NumLayers-1].AtVec(i)-groundTruth.AtVec(i)))
+func (network *Network) Derivative(states []mat.MutableVector, statesBeforeActivationFunctions []mat.MutableVector, groundTruth mat.MutableVector) ([][]mat.MutableVector, [][]float64) {
+	weightDerivatives := make([][]mat.MutableVector, network.NumLayers-1)
+	for i := 0; i < network.NumLayers-1; i++ {
+		weightDerivatives[i] = make([]mat.MutableVector, network.LayerSizes[i+1])
+		for j := 0; j < network.LayerSizes[i+1]; j++ {
+			weightDerivatives[i][j] = mat.NewVecDense(network.LayerSizes[i], make([]float64, network.LayerSizes[i]))
+		}
+	}
+	biasDerivatives := make([][]float64, network.NumLayers-1)
+	for i := 0; i < network.NumLayers-1; i++ {
+		biasDerivatives[i] = make([]float64, network.LayerSizes[i+1])
 	}
 
+	currDerivatives := mat.NewVecDense(network.LayerSizes[network.NumLayers-1], make([]float64, network.LayerSizes[network.NumLayers-1]))
+	for i := 0; i < network.LayerSizes[network.NumLayers-1]; i++ {
+		currDerivatives.SetVec(i, 2*(states[network.NumLayers-1].AtVec(i)-groundTruth.AtVec(i)))
+	}
+
+	for i := network.NumLayers - 1; i >= 1; i-- {
+		for j := 0; j < network.LayerSizes[i]; j++ {
+			currDerivatives.SetVec(j, currDerivatives.AtVec(j)*network.ActivationFunctions[i-1].Derivative(statesBeforeActivationFunctions[i].AtVec(j)))
+		}
+
+		newDerivatives := mat.NewVecDense(network.LayerSizes[i-1], make([]float64, network.LayerSizes[i-1]))
+
+		for j := 0; j < network.LayerSizes[i]; j++ {
+			for k := 0; k < network.LayerSizes[i-1]; k++ {
+				weightDerivatives[i-1][j].SetVec(k, states[i-1].AtVec(k)*currDerivatives.AtVec(j))
+				newDerivatives.SetVec(k, newDerivatives.AtVec(k)+network.Weights[i-1][j].AtVec(k))
+			}
+		}
+		for j := 0; j < network.LayerSizes[i]; j++ {
+			biasDerivatives[i-1][j] = currDerivatives.AtVec(j)
+		}
+		currDerivatives = newDerivatives
+	}
+	return weightDerivatives, biasDerivatives
+}
+
+func (network *Network) Learn(inputs mat.MutableVector, groundTruth mat.MutableVector, learnRate float64) float64 {
+	output, states, statesBeforeActivationFunctions := network.Run(inputs, true, true)
+	weightDerivatives, biasDerivatives := network.Derivative(states, statesBeforeActivationFunctions, groundTruth)
+
+	cost := float64(0)
+	for i := 0; i < network.LayerSizes[network.NumLayers-1]; i++ {
+		cost += (output.AtVec(i) - groundTruth.AtVec(i)) * (output.AtVec(i) - groundTruth.AtVec(i))
+	}
+
+	for i := 0; i < network.NumLayers-1; i++ {
+		for j := 0; j < network.LayerSizes[i+1]; j++ {
+			for k := 0; k < network.LayerSizes[i]; k++ {
+				network.Weights[i][j].SetVec(k, network.Weights[i][j].AtVec(k)-learnRate*weightDerivatives[i][j].AtVec(k))
+			}
+		}
+	}
+	for i := 0; i < network.NumLayers-1; i++ {
+		for j := 0; j < network.LayerSizes[i+1]; j++ {
+			network.Biases[i][j] -= biasDerivatives[i][j] * learnRate
+		}
+	}
+	return cost
 }

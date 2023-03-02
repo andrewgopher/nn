@@ -11,7 +11,7 @@ import (
 )
 
 func RenderFeedForward(network *feedforward.Network, inputs mat.MutableVector, width, height float64, format graphviz.Format, filename string) {
-	_, states, _ := network.Run(inputs, true, false)
+	_, states, statesBeforeActivationFunctions := network.Run(inputs, true, true)
 
 	g := graphviz.New()
 	g.SetLayout(graphviz.NEATO)
@@ -36,9 +36,9 @@ func RenderFeedForward(network *feedforward.Network, inputs mat.MutableVector, w
 			}
 
 			if i == 0 {
-				currNode.SetLabel(fmt.Sprint(inputs.AtVec(j)))
+				currNode.SetLabel(fmt.Sprint(states[0].AtVec(j)))
 			} else {
-				currNode.SetLabel("bias " + fmt.Sprint(mathext.RoundFloat64(network.Biases[i-1][j], 2)) + " output " + fmt.Sprint(mathext.RoundFloat64(states[i].AtVec(j), 2)))
+				currNode.SetLabel("bias " + fmt.Sprint(mathext.RoundFloat64(network.Biases[i-1][j], 2)) + " f(" + fmt.Sprint(mathext.RoundFloat64(statesBeforeActivationFunctions[i].AtVec(j), 2)) + ") = " + fmt.Sprint(mathext.RoundFloat64(states[i].AtVec(j), 2)))
 			}
 			currNode.SetPos(width/float64(network.NumLayers+1)*float64(i+1), height/float64(network.LayerSizes[i]+1)*float64(j+1))
 			currNode.SetPin(true)
