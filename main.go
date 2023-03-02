@@ -150,6 +150,9 @@ func main() {
 			fmt.Println(demoName)
 		}
 	} else {
+		if _, err := os.Stat("plots/"); err != nil {
+			os.Mkdir("plots/", 0755)
+		}
 		demo, ok := demos[os.Args[1]]
 		if !ok {
 			fmt.Println("please specify a valid demo:")
