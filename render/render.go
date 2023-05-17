@@ -10,7 +10,7 @@ import (
 	"gonum.org/v1/gonum/mat"
 )
 
-func RenderFeedForward(network *feedforward.Network, inputs mat.MutableVector, width, height float64, format graphviz.Format, filename string) {
+func RenderFeedForward(network *feedforward.Network, inputs *mat.VecDense, width, height float64, format graphviz.Format, filename string) {
 	_, states, statesBeforeActivationFunctions := network.Run(inputs, true, true)
 
 	g := graphviz.New()

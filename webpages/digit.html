@@ -1,0 +1,104 @@
+<html>
+    <head>
+        <title>Digit Identification</title>
+    </head>
+    <body>
+        <div id="pixelGrid">
+        </div>
+        <button onclick="dtetc()">Dtetc</button><!--intentional typo haha funny i am comedain-->
+        <button onclick="randomFromDataset()">random from dataset</button>
+        <p id="result"></p>
+        <style>
+            .pixel {
+                height: 30px;
+                width: 30px;
+                background-color: black;
+                border: none;
+                opacity: 0%;
+                margin: 0;
+            }
+        </style>
+        <script>
+            var mouseDown = 0;
+            document.body.onmousedown = function() { 
+            ++mouseDown;
+            }
+            document.body.onmouseup = function() {
+            --mouseDown;
+            }
+            let image = [];
+            
+            let pixelGrid = document.getElementById("pixelGrid");
+            for (let i = 0; i < 28; i ++) {
+                let currRow = document.createElement("div");
+                currRow.className = "pixelRow";
+                pixelGrid.appendChild(currRow);
+                image.push([]);
+                for (let j = 0; j<28; j ++) {
+                    let currButton = document.createElement("button");
+                    currButton.className = "pixel";
+                    currButton.onmouseover=function(){
+                        if (mouseDown) {
+                            for (let x = -1; x <= 1; x++) {
+                                for (let y = -1; y <= 1; y ++) {
+                                    if (i+x>=0&&j+y>=0&&i+x<28&&j+y<28){
+                                        image[i+x][j+y]+=255-80*(Math.abs(x)+Math.abs(y));
+                                    }
+                                }
+                            }
+                            updateGrid();
+                        }
+                    }
+                    currRow.appendChild(currButton);
+                    image[i].push(0);
+                }
+            }
+
+            function updateGrid() {
+                document.getElementById("result").innerHTML = "";
+                for (let i = 0; i<28;i++) {
+                    for (let j = 0; j<28;j++) {
+                        pixelGrid.children[i].children[j].style.opacity = Math.min(image[i][j],255)/255;
+                    }
+                }
+            }
+            function updateResult(response) {
+                let maxInd = 0;
+                let maxProb = response[0];
+                let total = 0;
+                for (let i = 0; i < 10; i ++ ){ 
+                    if (response[i] > maxProb) {
+                        maxProb = response[i];
+                        maxInd = i;
+                    }
+                    total += response[i];
+                }
+                document.getElementById("result").innerHTML = maxInd;
+                document.getElementById("result").innerHTML += " (confidence: ";
+                document.getElementById("result").innerHTML += maxProb/total;
+                document.getElementById("result").innerHTML += ")";
+            }
+            function setImage(response) {
+                for (let i = 0; i<28;i++) {
+                    for (let j = 0; j<28;j++) {
+                        image[i][j] = response["Image"][i*28+j];
+                    }
+                }
+                updateGrid();
+            }
+            async function dtetc() {
+                let imageData = [];
+                for (let i = 0; i<28;i++) {
+                    for (let j = 0; j<28;j++) {
+                        imageData.push(Math.min(255,image[i][j]));
+                    }
+                }
+                await fetch("http://localhost:8080/?image="+JSON.stringify(imageData))
+  .then((response) =>response.json()).then((json) =>updateResult(json))
+            }
+            async function randomFromDataset() {
+                await fetch("http://localhost:8080/random").then((response)=>response.json()).then((json) => setImage(json))
+            }
+        </script>
+    </body>
+</html>

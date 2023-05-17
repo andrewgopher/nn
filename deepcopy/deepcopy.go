@@ -4,7 +4,7 @@ import (
 	"gonum.org/v1/gonum/mat"
 )
 
-func Vector(vec mat.MutableVector) mat.MutableVector {
+func Vector(vec *mat.VecDense) *mat.VecDense {
 	result := mat.NewVecDense(vec.Len(), make([]float64, vec.Len()))
 	for i := 0; i < vec.Len(); i++ {
 		result.SetVec(i, vec.AtVec(i))
@@ -12,16 +12,16 @@ func Vector(vec mat.MutableVector) mat.MutableVector {
 	return result
 }
 
-func VectorSlice1D(slice []mat.MutableVector) []mat.MutableVector {
-	result := make([]mat.MutableVector, len(slice))
+func VectorSlice1D(slice []*mat.VecDense) []*mat.VecDense {
+	result := make([]*mat.VecDense, len(slice))
 	for i := 0; i < len(slice); i++ {
 		result[i] = Vector(slice[i])
 	}
 	return result
 }
 
-func VectorSlice2D(slice [][]mat.MutableVector) [][]mat.MutableVector {
-	result := make([][]mat.MutableVector, len(slice))
+func VectorSlice2D(slice [][]*mat.VecDense) [][]*mat.VecDense {
+	result := make([][]*mat.VecDense, len(slice))
 	for i := 0; i < len(slice); i++ {
 		result[i] = VectorSlice1D(slice[i])
 	}

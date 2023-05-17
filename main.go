@@ -1,166 +1,276 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
-	"math"
+	"io"
 	"math/rand"
+	"net/http"
+	"nn/activationfunction"
 	"nn/feedforward"
-	"nn/mathext"
+	"nn/geneticalgorithm"
+	"nn/gradientdescent"
 	"nn/random"
-	"nn/render"
 	"os"
-	"sort"
+	"os/exec"
+	"strconv"
 	"time"
 
-	"github.com/goccy/go-graphviz"
 	"gonum.org/v1/gonum/mat"
-	"gonum.org/v1/plot"
-	"gonum.org/v1/plot/plotter"
-	"gonum.org/v1/plot/plotutil"
-	"gonum.org/v1/plot/vg"
 )
 
-func calcFitness(network *feedforward.Network, numSamples int) float64 {
-	totalSamples := 0
-	correctAnswers := 0
-	for i := 0; i < numSamples; i++ {
-		x, y := random.RandomFloat64(-10, 10), random.RandomFloat64(-10, 10)
-		output, _, _ := network.Run(mat.NewVecDense(2, []float64{x, y}), false, false)
-
-		verdict := output.AtVec(0) > output.AtVec(1)
-
-		groundTruth := 5 <= math.Sqrt(x*x+y*y) && math.Sqrt(x*x+y*y) <= 8
-		if groundTruth == verdict {
-			correctAnswers++
-		}
-		totalSamples++
+func readFile(name string) ([]byte, error) {
+	file, err := os.Open(name)
+	if err != nil {
+		return nil, err
 	}
-	return float64(correctAnswers) / float64(totalSamples)
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	bytes := make([]byte, fileInfo.Size())
+	_, err = file.Read(bytes)
+	if err != nil {
+		return nil, err
+	}
+	return bytes, nil
 }
 
-func geneticAlgorithm() {
-	poolSize := 100
-	numSelected := 10
-	numRounds := 100
-	numSamples := 100
-
-	pool := []*feedforward.Network{}
-	for i := 0; i < poolSize; i++ {
-		network := feedforward.NewNetwork([]int{2, 3, 4, 3, 2}, []*feedforward.ActivationFunction{feedforward.Tanh, feedforward.Tanh, feedforward.Tanh, feedforward.Tanh})
-		network.Randomize(-1, 1, -1, 1)
-		pool = append(pool, network)
+func genPoint() (*mat.VecDense, *mat.VecDense) {
+	input := mat.NewVecDense(2, []float64{random.RandomFloat64(-10, 10), random.RandomFloat64(-10, 10)})
+	output := mat.NewVecDense(2, []float64{0, 0})
+	if -5 <= input.AtVec(0)+input.AtVec(1) && input.AtVec(0)+input.AtVec(1) <= 5 {
+		output.SetVec(0, 1)
+		output.SetVec(1, 0)
+	} else {
+		output.SetVec(0, 0)
+		output.SetVec(1, 1)
 	}
-
-	nextPool := []*feedforward.Network{}
-
-	var bestNetwork *feedforward.Network
-	bestFitness := -0.01
-	for i := 0; i < numRounds; i++ {
-		fitnessSum := float64(0)
-
-		fitnesses := make([]float64, poolSize)
-		indices := make([]int, poolSize)
-		for j := 0; j < poolSize; j++ {
-			indices[j] = j
-			fitnesses[j] = calcFitness(pool[j], numSamples)
-			fitnessSum += fitnesses[j]
-			if fitnesses[j] > bestFitness {
-				bestFitness = fitnesses[j]
-				bestNetwork = pool[j]
-			}
-		}
-		sort.Slice(indices, func(i, j int) bool {
-			return fitnesses[i] > fitnesses[j]
-		})
-		for i := 0; i < numSelected; i++ {
-			origCopiedNetwork := pool[indices[i]].Copy()
-			nextPool = append(nextPool, origCopiedNetwork)
-			for j := 0; j < poolSize/numSelected-1; j++ {
-				copiedNetwork := pool[indices[i]].Copy()
-				copiedNetwork.Vary(0.1)
-				nextPool = append(nextPool, copiedNetwork)
-			}
-		}
-		pool = nextPool
-		nextPool = []*feedforward.Network{}
-		fmt.Printf("Round %v, avg fitness %v, best fitness %v\n", i, fitnessSum/float64(poolSize), bestFitness)
-	}
-
-	render.RenderFeedForward(bestNetwork, mat.NewVecDense(2, make([]float64, 2)), 20, 20, graphviz.PNG, "plots/feedforward.png")
+	return input, output
 }
 
-func gradientDescent() {
-	numSteps := 10000
-	avgRange := 1000
+func classifyPointGeneticAlgorithm() {
+	geneticalgorithm.Run(100, 50, 3000, 50, []int{2, 3, 4, 3, 2}, []*activationfunction.ActivationFunction{activationfunction.Sigmoid, activationfunction.Sigmoid, activationfunction.Sigmoid, activationfunction.Sigmoid}, genPoint)
+}
 
-	avgCostPlot := plot.New()
-	avgCostPlot.X.Label.Text = "step"
-	avgCostPlot.Y.Label.Text = "avg cost (last 100 steps)"
+func classifyPointGradientDescent() {
+	gradientdescent.Run(100000, []int{2, 3, 4, 3, 2}, []*activationfunction.ActivationFunction{activationfunction.Sigmoid, activationfunction.Sigmoid, activationfunction.Sigmoid, activationfunction.Sigmoid}, genPoint)
+}
 
-	currCostSamples := []float64{}
+func parseDigitDataset() ([][][]int, []int, error) {
+	// digitImagesFile, _ := os.Open("datasets/digit_images.bin")
+	// digitLabelsFile, _ := os.Open("datasets/digit_labels.bin")
 
-	avgCosts := []float64{}
+	// digitImagesFileInfo, _ := digitImagesFile.Stat()
+	// digitLabelsFileInfo, _ := digitImagesFile.Stat()
 
-	network := feedforward.NewNetwork([]int{2, 3, 4, 3, 2}, []*feedforward.ActivationFunction{feedforward.Sigmoid, feedforward.Sigmoid, feedforward.Sigmoid, feedforward.Sigmoid})
-	network.Randomize(-1, 1, -1, 1)
-	for i := 0; i < numSteps; i++ {
-		x, y := random.RandomFloat64(-10, 10), random.RandomFloat64(-10, 10)
-		groundTruth := mat.NewVecDense(2, []float64{0, 0})
-		groundTruthBool := 5 <= math.Sqrt(x*x+y*y) && math.Sqrt(x*x+y*y) <= 8
-		if groundTruthBool {
-			groundTruth.SetVec(0, 1)
-			groundTruth.SetVec(1, 0)
+	// imagesFileBytes := make([]byte, digitImagesFileInfo.Size())
+	// digitImagesFile.Read(imagesFileBytes)
+	imagesFileBytes, err := readFile("datasets/digit_images.bin")
+	if err != nil {
+		return nil, nil, err
+	}
+	currInd := 0
+	currImages := [][][]int{}
+	for currInd < len(imagesFileBytes) {
+		currImages = append(currImages, make([][]int, 28))
+		for i := 0; i < 28; i++ {
+			currImages[len(currImages)-1][i] = make([]int, 28)
+			for j := 0; j < 28; j++ {
+				currImages[len(currImages)-1][i][j] = int(imagesFileBytes[currInd])
+				currInd++
+			}
+		}
+	}
+	labelsFileBytes, err := readFile("datasets/digit_labels.bin")
+	if err != nil {
+		return nil, nil, err
+	}
+	currLabels := []int{}
+	for i := 0; i < len(labelsFileBytes); i++ {
+		currLabels = append(currLabels, int(labelsFileBytes[i]))
+	}
+	return currImages, currLabels, nil
+}
+
+var digitImages [][][]int
+var digitLabels []int
+
+func genDigit() (*mat.VecDense, *mat.VecDense) {
+	i := random.RandomInt(0, len(digitImages)-1)
+	input := mat.NewVecDense(28*28, make([]float64, 28*28))
+	for j := 0; j < 28; j++ {
+		for k := 0; k < 28; k++ {
+			input.SetVec(j*28+k, float64(digitImages[i][j][k]))
+		}
+	}
+	output := mat.NewVecDense(10, make([]float64, 10))
+	output.SetVec(digitLabels[i], 1)
+	return input, output
+}
+
+func trainClassifyDigit() {
+	fmt.Println("parsing digit dataset...")
+	digitImages, digitLabels, _ = parseDigitDataset()
+	fmt.Println("finished parsing digit datset")
+	gradientdescent.Run(100000, []int{28 * 28, 384, 192, 91, 10}, []*activationfunction.ActivationFunction{activationfunction.Sigmoid, activationfunction.Sigmoid, activationfunction.Sigmoid, activationfunction.Sigmoid}, genDigit)
+}
+
+func runNeuralNetwork() {
+	networkFileBytes, err := readFile(os.Args[2])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
+
+	jsonNetwork := &feedforward.JSONNetwork{}
+	json.Unmarshal(networkFileBytes, jsonNetwork)
+	network := jsonNetwork.ToNetwork()
+
+	inputsSlice := []float64{}
+	json.Unmarshal([]byte(os.Args[3]), &inputsSlice)
+
+	numInputs := len(inputsSlice)
+	inputs := mat.NewVecDense(numInputs, inputsSlice)
+	outputs, _, _ := network.Run(inputs, false, false)
+	fmt.Print("[")
+	for i := 0; i < network.LayerSizes[network.NumLayers-1]; i++ {
+		fmt.Print(outputs.AtVec(i))
+		if i != network.LayerSizes[network.NumLayers-1]-1 {
+			fmt.Print(",")
+		}
+	}
+	fmt.Println("]")
+}
+
+func queryDigitDataset() {
+	parseDigitDataset()
+	imageIndex64, _ := strconv.ParseInt(os.Args[2], 10, 0)
+	imageIndex := int(imageIndex64) - 1
+	digitImages, digitLabels, _ = parseDigitDataset()
+	output := "["
+	for i := 0; i < 28; i++ {
+		for j := 0; j < 28; j++ {
+			output += strconv.Itoa(digitImages[imageIndex][i][j])
+			if j != 27 || i != 27 {
+				output += ","
+			}
+		}
+	}
+	output += "]"
+	fmt.Print("{\"Image\":" + output + ",")
+	fmt.Println("\"Label\":" + strconv.Itoa(digitLabels[imageIndex]) + "}")
+}
+
+func classifyDigitInDataset() { //TODO: clean this up
+	digitJSON, _ := exec.Command("./nn", "queryDigitDataset", os.Args[2]).Output()
+	digit := struct {
+		Image []int
+		Label int
+	}{}
+	json.Unmarshal(digitJSON, &digit)
+
+	imageJSON := "["
+	for i := 0; i < 784; i++ {
+		imageJSON += strconv.Itoa(digit.Image[i])
+		if i != 783 {
+			imageJSON += ","
+		}
+	}
+	imageJSON += "]"
+	outputJSON, _ := exec.Command("./nn", "runNeuralNetwork", os.Args[3], imageJSON).Output()
+	output := []float64{}
+	json.Unmarshal(outputJSON, &output)
+
+	maxProbabilityInd := 0
+	maxProbability := output[0]
+	for i := 0; i < len(output); i++ {
+		if output[i] > maxProbability {
+			maxProbability = output[i]
+			maxProbabilityInd = i
+		}
+	}
+
+	fmt.Printf("{\"Output\":%v,\"GroundTruth\":%v}\n", maxProbabilityInd, digit.Label)
+}
+
+func getRoot(w http.ResponseWriter, r *http.Request) {
+	fmt.Println(r.Method, r.URL)
+	image, ok := r.URL.Query()["image"]
+	if !ok {
+		digitWebpageBytes, err := readFile("webpages/digit.html")
+		if err != nil {
+			io.WriteString(w, err.Error())
 		} else {
-			groundTruth.SetVec(0, 0)
-			groundTruth.SetVec(1, 1)
+			io.WriteString(w, string(digitWebpageBytes))
 		}
-
-		currCost := mathext.RoundFloat64(network.Learn(mat.NewVecDense(2, []float64{x, y}), groundTruth, 0.01), 5)
-		if len(currCostSamples) == avgRange {
-			currCostSamples = currCostSamples[1:]
+	} else {
+		output, err := exec.Command("./nn", "runNeuralNetwork", os.Args[2], image[0]).Output()
+		if err != nil {
+			io.WriteString(w, err.Error())
+		} else {
+			io.WriteString(w, string(output))
 		}
-		currCostSamples = append(currCostSamples, currCost)
+	}
+}
 
-		currCostSampleSum := float64(0)
-		for _, cost := range currCostSamples {
-			currCostSampleSum += cost
+func getRandom(w http.ResponseWriter, r *http.Request) {
+	fmt.Println(r.Method, r.URL)
+	randomDigit, err := exec.Command("./nn", "randomDigitDataset").Output()
+	if err != nil {
+		io.WriteString(w, err.Error())
+	} else {
+		io.WriteString(w, string(randomDigit))
+	}
+}
+
+func classifyDigitWebserver() {
+	http.HandleFunc("/", getRoot)
+	http.HandleFunc("/random", getRandom)
+
+	http.ListenAndServe(":8080", nil)
+}
+
+func randomDigitDataset() {
+	digitImages, digitLabels, _ := parseDigitDataset()
+	imageIndex := rand.Intn(len(digitImages))
+	digitImages, digitLabels, _ = parseDigitDataset()
+	output := "["
+	for i := 0; i < 28; i++ {
+		for j := 0; j < 28; j++ {
+			output += strconv.Itoa(digitImages[imageIndex][i][j])
+			if j != 27 || i != 27 {
+				output += ","
+			}
 		}
-		avgCosts = append(avgCosts, currCostSampleSum/float64(len(currCostSamples)))
 	}
-
-	avgCostPlotPoints := make(plotter.XYs, numSteps)
-	for i := 0; i < numSteps; i++ {
-		avgCostPlotPoints[i].X = float64(i)
-		avgCostPlotPoints[i].Y = avgCosts[i]
-	}
-	plotutil.AddLinePoints(avgCostPlot, "avg cost", avgCostPlotPoints)
-	if err := avgCostPlot.Save(4*vg.Inch, 4*vg.Inch, "plots/cost.png"); err != nil {
-		panic(err)
-	}
-
-	render.RenderFeedForward(network, mat.NewVecDense(2, make([]float64, 2)), 20, 20, graphviz.PNG, "plots/feedforward.png")
+	output += "]"
+	fmt.Print("{\"Image\":" + output + ",")
+	fmt.Println("\"Label\":" + strconv.Itoa(digitLabels[imageIndex]) + "}")
 }
 
 func main() {
 	rand.Seed(time.Now().UnixMilli())
-	demos := map[string]func(){"geneticAlgorithm": geneticAlgorithm, "gradientDescent": gradientDescent}
+	demos := map[string]struct {
+		runFunc    func()
+		descripton string
+	}{"classifyPointGeneticAlgorithm": {classifyPointGeneticAlgorithm, "checks if the sum of x and y values is >= -5 and <= 5 using the genetic algorithm"}, "classifyPointGradientDescent": {classifyPointGradientDescent, "checks if the sum of x and y values is >= -5 and <= 5 using gradient descent"}, "trainClassifyDigit": {trainClassifyDigit, "train classifying digits using nn"}, "runNeuralNetwork": {runNeuralNetwork, "run neural network"}, "queryDigitDataset": {queryDigitDataset, "output the kth image in a 1D JSON list"}, "classifyDigitInDataset": {classifyDigitInDataset, "classify kth digit in dataset"}, "classifyDigitWebserver": {classifyDigitWebserver, "start digit classification web interface"}, "randomDigitDataset": {randomDigitDataset, "random digit in dataset"}}
 	if len(os.Args) == 1 {
 		fmt.Println("please specify a demo to run:")
-		for demoName, _ := range demos {
-			fmt.Println(demoName)
+		for demoName, demo := range demos {
+			fmt.Printf("%v: %v\n", demoName, demo.descripton)
 		}
 	} else {
-		if _, err := os.Stat("plots/"); err != nil {
-			os.Mkdir("plots/", 0755)
+		if _, err := os.Stat("output/"); err != nil {
+			os.Mkdir("output/", 0775)
 		}
 		demo, ok := demos[os.Args[1]]
 		if !ok {
 			fmt.Println("please specify a valid demo:")
-			for demoName, _ := range demos {
+			for demoName := range demos {
 				fmt.Println(demoName)
 			}
 		} else {
-			demo()
+			demo.runFunc()
 		}
 	}
 }
